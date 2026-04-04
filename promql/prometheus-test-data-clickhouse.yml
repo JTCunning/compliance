@@ -2,7 +2,7 @@
 # Start reference Prometheus with:
 #   prometheus --config.file=prometheus-test-data-clickhouse.yml
 #
-# Prerequisites: ClickHouse listening on 127.0.0.1:9093 with /write (see clickhouse-docker/).
+# Prerequisites: ClickHouse published on the host (default 127.0.0.1:19093 → container :9093; see clickhouse-docker/).
 
 global:
   scrape_interval: 5s
@@ -16,4 +16,4 @@ scrape_configs:
       - 'demo.promlabs.com:10002'
 
 remote_write:
-  - url: http://127.0.0.1:9093/write
+  - url: http://127.0.0.1:19093/write

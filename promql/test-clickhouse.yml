@@ -2,7 +2,7 @@ reference_target_config:
   query_url: 'http://localhost:9090'
 
 test_target_config:
-  query_url: 'http://localhost:9093'
+  query_url: 'http://localhost:19093'
 
 # Optional: set when ClickHouse prometheus HTTP uses basic auth (match Docker env).
 # basic_auth_user: 'default'

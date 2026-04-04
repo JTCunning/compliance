@@ -1,6 +1,6 @@
 # PromQL compliance testing against ClickHouse
 
-This adds a **ClickHouse** target for the PromQL compliance tester (`promql-compliance-tester`), comparing **reference Prometheus** (port **9090**) with ClickHouse’s **Prometheus-compatible query API** on port **9093**.
+This adds a **ClickHouse** target for the PromQL compliance tester (`promql-compliance-tester`), comparing **reference Prometheus** (port **9090**) with ClickHouse’s **Prometheus-compatible query API** on the **host** port (**19093** by default; mapped to **9093** inside the container).
 
 Upstream docs: [promql/README.md](./README.md).
 
@@ -9,8 +9,14 @@ Upstream docs: [promql/README.md](./README.md).
 | Path | Purpose |
 |------|---------|
 | [test-clickhouse.yml](./test-clickhouse.yml) | `query_url` for reference vs ClickHouse (base URL only; no `/api/v1/query` suffix). |
-| [prometheus-test-data-clickhouse.yml](./prometheus-test-data-clickhouse.yml) | Demo scrape targets + `remote_write` to `http://127.0.0.1:9093/write`. |
+| [prometheus-test-data-clickhouse.yml](./prometheus-test-data-clickhouse.yml) | Demo scrape targets + `remote_write` to ClickHouse `/write` on the host port. |
 | [clickhouse-docker/](./clickhouse-docker/) | `docker compose` stack, XML for `prometheus` HTTP + `TimeSeries` profile. |
+
+## Port alignment
+
+Default **host** port is **19093** (avoids clashes with other stacks using **9093**/**8123**). It is controlled by **`CLICKHOUSE_PROMETHEUS_HOST_PORT`** in `docker compose`.
+
+If you change it, update **both** `prometheus-test-data-clickhouse.yml` (`remote_write` URL) and `test-clickhouse.yml` (`test_target_config.query_url`) to the same host port.
 
 ## Prerequisites
 
@@ -28,7 +34,7 @@ docker compose up -d
 
 Image default: `clickhouse/clickhouse-server:latest`. **`latest` may trail `master`**; for a build from source, see [Source-built image](#source-built-image) below.
 
-Compose publishes **9093** only on the host so it does not collide with other ClickHouse instances on **8123**/**9000**. Use `docker exec clickhouse-promql-compliance clickhouse-client` for SQL.
+Only the Prometheus handler port is published on the host. Use `docker exec clickhouse-promql-compliance clickhouse-client` for SQL.
 
 ## 2. Create the TimeSeries table
 
@@ -65,6 +71,7 @@ go build -o promql-compliance-tester ./cmd/promql-compliance-tester
 Example log capture:
 
 ```bash
+mkdir -p ~/compliance/promql
 ./promql-compliance-tester \
   -config-file=promql-test-queries.yml \
   -config-file=test-clickhouse.yml \
@@ -80,7 +87,7 @@ Same compose and mounts; only the image changes.
    - `CLICKHOUSE_IMAGE=ch-promql:local docker compose up -d`, or
    - Copy `docker-compose.override.source.yml.example` to `docker-compose.override.yml` and set `image:` to your tag.
 
-`remote_write` and `test-clickhouse.yml` URLs stay **9093** on the host.
+Keep **`remote_write`** and **`test_target_config.query_url`** aligned with **`CLICKHOUSE_PROMETHEUS_HOST_PORT`** (default **19093**).
 
 ## HTTP basic auth
 
