@@ -95,6 +95,12 @@ Keep **`remote_write`** and **`test_target_config.query_url`** aligned with **`C
 
 If you enable auth on the ClickHouse HTTP/prometheus listener, set `basic_auth_user` / `basic_auth_pass` in `test-clickhouse.yml` to match.
 
+## Troubleshooting
+
+- **`Bind … port … already in use`:** set **`CLICKHOUSE_PROMETHEUS_HOST_PORT`** when running `docker compose` to a free port, then change **`19093`** in both `prometheus-test-data-clickhouse.yml` and `test-clickhouse.yml` to the same value (or regenerate snippets with `sed` on the VM).
+- **`401 Unauthorized` on `remote_write`:** ensure compose includes **`CLICKHOUSE_SKIP_USER_SETUP=1`** (committed default). Without it, the official image restricts the `default` user to loopback while scrapes arrive from the Docker bridge / host network.
+- **Reference Prometheus not on 9090:** run with `--web.listen-address=127.0.0.1:<port>` and set `reference_target_config.query_url` in `test-clickhouse.yml` to `http://localhost:<port>`.
+
 ## Expectations
 
 First runs may not be 100% passing until `query_tweaks` and/or engine gaps are addressed; this setup is meant to give a **reproducible** baseline.
