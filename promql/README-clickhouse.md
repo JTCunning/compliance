@@ -11,10 +11,38 @@ Upstream docs: [promql/README.md](./README.md).
 | [test-clickhouse.yml](./test-clickhouse.yml) | `query_url` for reference vs ClickHouse (base URL only; no `/api/v1/query` suffix). |
 | [prometheus-test-data-clickhouse.yml](./prometheus-test-data-clickhouse.yml) | Demo scrape targets + `remote_write` to ClickHouse `/write` on the host port. |
 | [clickhouse-docker/](./clickhouse-docker/) | `docker compose` stack, XML for `prometheus` HTTP + `TimeSeries` profile. |
+| [scripts/run-on-vm-default-ports.sh](./scripts/run-on-vm-default-ports.sh) | One-shot: compose up → `CREATE TABLE` → Prometheus on **9090** → run tester (committed YAML, no `sed`). |
 
-## Port alignment
+## Default ports (canonical)
 
-Default **host** port is **19093** (avoids clashes with other stacks using **9093**/**8123**). It is controlled by **`CLICKHOUSE_PROMETHEUS_HOST_PORT`** in `docker compose`.
+| Role | Host | Notes |
+|------|------|--------|
+| Reference Prometheus | **9090** | `prometheus --config.file=prometheus-test-data-clickhouse.yml` uses default web listen (`test-clickhouse.yml` → `http://localhost:9090`). |
+| ClickHouse prom API + `/write` | **19093** | `docker compose` publishes container **9093** as **19093** (`CLICKHOUSE_PROMETHEUS_HOST_PORT` default). |
+
+With defaults you **do not** copy YAML through `sed`: `remote_write` in [prometheus-test-data-clickhouse.yml](./prometheus-test-data-clickhouse.yml) is already `http://127.0.0.1:19093/write`, and [test-clickhouse.yml](./test-clickhouse.yml) already points at `http://localhost:19093`.
+
+### One-liner on the VM (defaults)
+
+From the **`promql/`** directory of this repo:
+
+```bash
+bash scripts/run-on-vm-default-ports.sh
+```
+
+Optional extra flags are forwarded to `promql-compliance-tester` (for example `-query-parallelism=8`). Logs: **`/tmp/prom_ch_compliance_default.log`**.
+
+### Manual steps (same as the script)
+
+1. `cd clickhouse-docker && docker compose up -d`
+2. `docker exec clickhouse-promql-compliance clickhouse-client -q "CREATE TABLE IF NOT EXISTS default.prometheus ENGINE = TimeSeries"`
+3. From `promql/`: `prometheus --config.file=prometheus-test-data-clickhouse.yml` (leave running; default **9090**)
+4. After warmup: `go build -o promql-compliance-tester ./cmd/promql-compliance-tester` then  
+   `./promql-compliance-tester -config-file=promql-test-queries.yml -config-file=test-clickhouse.yml`
+
+## Port alignment (non-default)
+
+Default **host** port **19093** is controlled by **`CLICKHOUSE_PROMETHEUS_HOST_PORT`** in `docker compose`.
 
 If you change it, update **both** `prometheus-test-data-clickhouse.yml` (`remote_write` URL) and `test-clickhouse.yml` (`test_target_config.query_url`) to the same host port.
 
@@ -97,9 +125,9 @@ If you enable auth on the ClickHouse HTTP/prometheus listener, set `basic_auth_u
 
 ## Troubleshooting
 
-- **`Bind … port … already in use`:** set **`CLICKHOUSE_PROMETHEUS_HOST_PORT`** when running `docker compose` to a free port, then change **`19093`** in both `prometheus-test-data-clickhouse.yml` and `test-clickhouse.yml` to the same value (or regenerate snippets with `sed` on the VM).
+- **`Bind … 19093 … already in use`:** another process (often a **native** `clickhouse-server` bound to `127.0.0.1:19093`) is using the default host port. Stop it or set **`CLICKHOUSE_PROMETHEUS_HOST_PORT`** to a free port and edit both YAML files to match.
+- **`Bind … 9090 … already in use`:** run reference Prometheus with `--web.listen-address=127.0.0.1:<port>` and set `reference_target_config.query_url` in `test-clickhouse.yml` to `http://localhost:<port>`.
 - **`401 Unauthorized` on `remote_write`:** ensure compose includes **`CLICKHOUSE_SKIP_USER_SETUP=1`** (committed default). Without it, the official image restricts the `default` user to loopback while scrapes arrive from the Docker bridge / host network.
-- **Reference Prometheus not on 9090:** run with `--web.listen-address=127.0.0.1:<port>` and set `reference_target_config.query_url` in `test-clickhouse.yml` to `http://localhost:<port>`.
 
 ## Expectations
 
@@ -109,12 +137,8 @@ On this fork branch, `promql-compliance-tester` **records** internal compare err
 
 ### Reference Prometheus must match this data path
 
-`test-clickhouse.yml` assumes the **same** reference Prometheus that loads `prometheus-test-data-clickhouse.yml` (demo scrape + `remote_write` into ClickHouse). If **`http://localhost:9090`** is already some other Prometheus on the host, point `reference_target_config.query_url` at the instance that actually runs that config (for example `http://127.0.0.1:19090` with `--web.listen-address=127.0.0.1:19090`).
+`test-clickhouse.yml` assumes the **same** reference Prometheus that loads `prometheus-test-data-clickhouse.yml` (demo scrape + `remote_write` into ClickHouse). If **`http://localhost:9090`** is already some other Prometheus on the host, use a different listen address and update `reference_target_config.query_url`.
 
-### Latest measured pass rate (example VM run)
+### Measured pass rate (informative)
 
-With **`clickhouse/clickhouse-server:latest`** (Docker Hub), dedicated reference Prometheus on **19090**, ClickHouse prometheus port published on **39093**, and ~25s scrape/`remote_write` warmup before the suite:
-
-**`Total: 4 / 539 (0.74%) passed, 0 unsupported`**
-
-Most failures were **`Query failed unexpectedly`** from ClickHouse’s PromQL handler (often `bad_data` / empty-query style parse errors relative to what the Go `prometheus` client sends for `query_range`). Re-run after engine fixes; allow **longer** warmup (upstream suggests ~1 hour) if you care about data-dependent mismatches, not just API errors.
+With **`clickhouse/clickhouse-server:latest`**, a dedicated reference Prometheus using the same scrape + `remote_write` config as this tree, and a short warmup before the suite, recent runs reported on the order of **`Total: 4 / 539 (~0.7%) passed, 0 unsupported`**, with most failures from ClickHouse’s PromQL **`query_range`** path vs the Go `prometheus` client. Re-run after engine fixes; use a **longer** warmup (upstream suggests ~1 hour) if you care about data-dependent mismatches.
