@@ -6,6 +6,9 @@ services:
   clickhouse:
     image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}
     container_name: clickhouse-promql-compliance
+    # Official image otherwise restricts `default` to loopback; remote_write from the host hits the bridge network.
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
     # Host port defaults to 19093 to avoid clashes with other Prometheus/ClickHouse stacks; container listens on 9093.
     ports:
       - "${CLICKHOUSE_PROMETHEUS_HOST_PORT:-19093}:9093"
