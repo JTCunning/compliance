@@ -106,3 +106,15 @@ If you enable auth on the ClickHouse HTTP/prometheus listener, set `basic_auth_u
 First runs may not be 100% passing until `query_tweaks` and/or engine gaps are addressed; this setup is meant to give a **reproducible** baseline.
 
 On this fork branch, `promql-compliance-tester` **records** internal compare errors (for example when the reference Prometheus version no longer matches a testcase’s `should_fail` expectation) as failed results so the run still prints a **`Total: … passed`** summary instead of exiting early.
+
+### Reference Prometheus must match this data path
+
+`test-clickhouse.yml` assumes the **same** reference Prometheus that loads `prometheus-test-data-clickhouse.yml` (demo scrape + `remote_write` into ClickHouse). If **`http://localhost:9090`** is already some other Prometheus on the host, point `reference_target_config.query_url` at the instance that actually runs that config (for example `http://127.0.0.1:19090` with `--web.listen-address=127.0.0.1:19090`).
+
+### Latest measured pass rate (example VM run)
+
+With **`clickhouse/clickhouse-server:latest`** (Docker Hub), dedicated reference Prometheus on **19090**, ClickHouse prometheus port published on **39093**, and ~25s scrape/`remote_write` warmup before the suite:
+
+**`Total: 4 / 539 (0.74%) passed, 0 unsupported`**
+
+Most failures were **`Query failed unexpectedly`** from ClickHouse’s PromQL handler (often `bad_data` / empty-query style parse errors relative to what the Go `prometheus` client sends for `query_range`). Re-run after engine fixes; allow **longer** warmup (upstream suggests ~1 hour) if you care about data-dependent mismatches, not just API errors.
