@@ -104,3 +104,5 @@ If you enable auth on the ClickHouse HTTP/prometheus listener, set `basic_auth_u
 ## Expectations
 
 First runs may not be 100% passing until `query_tweaks` and/or engine gaps are addressed; this setup is meant to give a **reproducible** baseline.
+
+On this fork branch, `promql-compliance-tester` **records** internal compare errors (for example when the reference Prometheus version no longer matches a testcase’s `should_fail` expectation) as failed results so the run still prints a **`Total: … passed`** summary instead of exiting early.
