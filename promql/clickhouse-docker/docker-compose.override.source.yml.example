@@ -1,0 +1,11 @@
+# Copy to docker-compose.override.yml (gitignored locally if you prefer) and adjust the tag,
+# or run: CLICKHOUSE_IMAGE=ch-promql:local docker compose up -d
+#
+# Build a local image from ClickHouse source on the VM, for example:
+#   git clone https://github.com/ClickHouse/ClickHouse.git
+#   cd ClickHouse/docker/server
+#   docker build -t ch-promql:local .
+
+services:
+  clickhouse:
+    image: ch-promql:local

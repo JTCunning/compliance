@@ -1,0 +1,12 @@
+reference_target_config:
+  query_url: 'http://localhost:9090'
+
+test_target_config:
+  query_url: 'http://localhost:9093'
+
+# Optional: set when ClickHouse prometheus HTTP uses basic auth (match Docker env).
+# basic_auth_user: 'default'
+# basic_auth_pass: 'secret'
+
+# Add query_tweaks after a baseline run if comparisons show systematic differences
+# (see test-victoriametrics.yml for align_timestamps_to_step).

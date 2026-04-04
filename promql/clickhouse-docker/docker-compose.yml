@@ -1,0 +1,19 @@
+# Default: Docker Hub clickhouse/clickhouse-server:latest.
+# Override image: CLICKHOUSE_IMAGE=ch-promql:local docker compose up -d
+# or use docker-compose.override.source.yml.example.
+
+services:
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:latest}
+    container_name: clickhouse-promql-compliance
+    ports:
+      - "9093:9093"
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ./config.d/prometheus-compliance.xml:/etc/clickhouse-server/config.d/prometheus-compliance.xml:ro
+      - ./users.d/time-series-compliance.xml:/etc/clickhouse-server/users.d/time-series-compliance.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
