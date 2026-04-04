@@ -134,11 +134,18 @@ func main() {
 		go func(i int, tc *comparer.TestCase) {
 			res, err := comp.Compare(tc)
 			if err != nil {
-				log.Fatalf("Error running comparison: %v", err)
-			}
-			results[i] = res
-			if !res.Success() {
+				// Record as failure instead of aborting the suite (e.g. reference Prometheus
+				// version no longer matches a testcase's should_fail expectation).
+				results[i] = &comparer.Result{
+					TestCase:          tc,
+					UnexpectedFailure: err.Error(),
+				}
 				allSuccess.Store(false)
+			} else {
+				results[i] = res
+				if !res.Success() {
+					allSuccess.Store(false)
+				}
 			}
 			progressBar.Increment()
 			<-workCh
