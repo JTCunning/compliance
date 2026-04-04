@@ -13,15 +13,11 @@ Upstream docs: [promql/README.md](./README.md).
 | [test-clickhouse.yml](./test-clickhouse.yml) | `query_url` for reference vs ClickHouse (base URL only; no `/api/v1/query` suffix). |
 | [prometheus-test-data-clickhouse.yml](./prometheus-test-data-clickhouse.yml) | Demo scrape targets + `remote_write` to ClickHouse `/write` on the host port. |
 | [clickhouse-docker/](./clickhouse-docker/) | `docker compose` stack, XML for `prometheus` HTTP + `TimeSeries` profile. |
-| [scripts/run-on-vm-default-ports.sh](./scripts/run-on-vm-default-ports.sh) | One-shot: compose up → `CREATE TABLE` → Prometheus on **9090** → run tester (uses POST→GET proxy by default; see below). |
-| [scripts/prometheus-post-to-get-proxy.py](./scripts/prometheus-post-to-get-proxy.py) | Sidecar: rewires `client_golang` **POST** `/api/v1/query` and `/query_range` into **GET** with the same form fields. |
-| [test-clickhouse-get-proxy.yml](./test-clickhouse-get-proxy.yml) | Like `test-clickhouse.yml` but `test_target_config.query_url` → **`http://localhost:29193`** (proxy → ClickHouse **19093**). |
+| [scripts/run-on-vm-default-ports.sh](./scripts/run-on-vm-default-ports.sh) | One-shot: compose up → `CREATE TABLE` → Prometheus on **9090** → run tester (`test-clickhouse.yml`). |
 
-## Prometheus Go client: POST vs GET
+## Prometheus Go client and POST bodies
 
-`github.com/prometheus/client_golang` **`api/prometheus/v1`** implements **`QueryRange`** (and **`Query`**) via **`DoGetFallback`**: it sends **`POST`** with **`application/x-www-form-urlencoded`** first and retries with **GET** only if the server returns **405** or **501**. There is **no** environment variable or flag on **`promql-compliance-tester`** to force **GET** without changing code.
-
-To exercise ClickHouse with **GET** query parameters only, use the **Python sidecar** (defaults **listen `0.0.0.0:29193`**, upstream **`http://127.0.0.1:19093`**) and **`test-clickhouse-get-proxy.yml`**. **`run-on-vm-default-ports.sh`** starts this proxy unless **`PROMQL_COMPLIANCE_NO_GET_PROXY=1`**.
+`github.com/prometheus/client_golang` **`api/prometheus/v1`** sends **`QueryRange`** / **`Query`** as **`POST`** with **`application/x-www-form-urlencoded`** first (**`DoGetFallback`** retries **GET** only on **405** / **501**). There is no env flag to force **GET**. If **`query`** arrives empty in ClickHouse’s **`QueryAPIImpl`** (`PrometheusRequestHandler.cpp` + **`HTMLForm`**), fix **server-side** parsing on the **`prometheus`** HTTP listener so **POST** bodies are read the same way as for the main HTTP interface.
 
 ## Default ports (canonical)
 
@@ -29,7 +25,6 @@ To exercise ClickHouse with **GET** query parameters only, use the **Python side
 |------|------|--------|
 | Reference Prometheus | **9090** | `prometheus --config.file=prometheus-test-data-clickhouse.yml` uses default web listen (`test-clickhouse.yml` → `http://localhost:9090`). |
 | ClickHouse prom API + `/write` | **19093** | `docker compose` publishes container **9093** as **19093** (`CLICKHOUSE_PROMETHEUS_HOST_PORT` default). |
-| POST→GET proxy (default run script) | **29193** | Forwards to **19093**; `remote_write` still targets **19093** directly (not through the proxy). |
 
 With defaults you **do not** copy YAML through `sed`: `remote_write` in [prometheus-test-data-clickhouse.yml](./prometheus-test-data-clickhouse.yml) is already `http://127.0.0.1:19093/write`, and [test-clickhouse.yml](./test-clickhouse.yml) already points at `http://localhost:19093`.
 
@@ -41,7 +36,7 @@ From the **`promql/`** directory of this repo:
 bash scripts/run-on-vm-default-ports.sh
 ```
 
-Optional extra flags are forwarded to `promql-compliance-tester` (for example `-query-parallelism=8`). Logs: **`/tmp/prom_ch_compliance_default.log`**, proxy: **`/tmp/promql_get_proxy.log`**. Needs **python3** and a free **29193** unless you set **`PROMQL_COMPLIANCE_NO_GET_PROXY=1`** (direct POST to ClickHouse).
+Optional extra flags are forwarded to `promql-compliance-tester` (for example `-query-parallelism=8`). Logs: **`/tmp/prom_ch_compliance_default.log`**.
 
 ### Manual steps (same as the script)
 
@@ -142,7 +137,7 @@ On this fork branch, `promql-compliance-tester` **records** internal compare err
 
 ### Measured pass rate and what failed (informative)
 
-One full run (expanded **539** testcase executions against **`clickhouse/clickhouse-server:latest`**, dedicated reference Prometheus with the same `prometheus-test-data-clickhouse.yml`, short warmup), **before** the POST→GET sidecar, reported:
+One full run (expanded **539** testcase executions against **`clickhouse/clickhouse-server:latest`**, dedicated reference Prometheus with the same `prometheus-test-data-clickhouse.yml`, short warmup) reported:
 
 **`Total: 4 / 539 (0.74%) passed, 0 unsupported`**
 
@@ -150,10 +145,8 @@ Failure breakdown from that run’s text output:
 
 | Count | What happened |
 |------|----------------|
-| **534** | **ClickHouse** returned an error on the test target **`query_range`** call while **reference Prometheus** succeeded. The repeated message was **`bad_data`**: PromQL parser **`mismatched input '<EOF>' … at position 0`** with an **empty query string** after `while parsing PromQL query:` — i.e. **`params->get("query", "")` was empty** in ClickHouse’s **`QueryAPIImpl`** even though the Go client sent a normal **`POST`** with **`application/x-www-form-urlencoded`** body (see `PrometheusRequestHandler.cpp` + `HTMLForm`). Causes may include how the **`prometheus`** HTTP listener parses the request versus the main HTTP server; a **GET** with the same parameters is still worth testing via **`prometheus-post-to-get-proxy.py`**. |
+| **534** | **ClickHouse** returned an error on the test target **`query_range`** call while **reference Prometheus** succeeded. The repeated message was **`bad_data`**: PromQL parser **`mismatched input '<EOF>' … at position 0`** with an **empty query string** after `while parsing PromQL query:` — i.e. **`params->get("query", "")` was empty** in ClickHouse’s **`QueryAPIImpl`** even though the Go client sent a normal **`POST`** with **`application/x-www-form-urlencoded`** body (see `PrometheusRequestHandler.cpp` + `HTMLForm`). Likely fix: ensure the **`prometheus`** HTTP stack parses **POST** form bodies like the main HTTP handler. |
 | **1** | **Reference vs testcase expectation:** `label_replace(demo_num_cpus, "instance", "", "", "")` — testcase expects the reference query to **fail**; **Prometheus 2.45.x** on the VM **succeeded**, so the comparer recorded a failure (this fork’s change turns that into a counted failure instead of aborting the run). |
 | **4** | **Passed** (not printed as `PASSED` unless you pass **`-output-passing`** to the tester). |
-
-**After** adding the default POST→GET proxy in **`run-on-vm-default-ports.sh`**, re-pull this branch on the VM and re-run; if the pass rate jumps, the issue was largely **method / parameter binding** on the **`prometheus`** port. If it stays ~**0.74%**, investigate server-side parsing for both **GET** and **POST** on that listener.
 
 For agents: interpret logs, free ports, manage Docker lifecycle, and reproduce on a Linux VM via that skill. Re-run after ClickHouse fixes; use a **longer** warmup (upstream suggests ~1 hour) if you focus on **series alignment** rather than API/parse errors.
