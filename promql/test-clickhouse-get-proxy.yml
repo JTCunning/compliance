@@ -1,0 +1,9 @@
+# Same as test-clickhouse.yml but query_url points at the POST→GET sidecar (default :29193).
+# Run: python3 scripts/prometheus-post-to-get-proxy.py
+# Or use scripts/run-on-vm-default-ports.sh which starts the proxy when using GET mode.
+
+reference_target_config:
+  query_url: 'http://localhost:9090'
+
+test_target_config:
+  query_url: 'http://localhost:29193'

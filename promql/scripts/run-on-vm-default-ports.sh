@@ -3,7 +3,12 @@
 #   Reference Prometheus:  http://localhost:9090  (default listen)
 #   ClickHouse prom HTTP: http://localhost:19093  (docker compose host map → container 9093)
 #
-# Prerequisites: Docker, prometheus binary, Go; ports 9090 and 19093 free on the host.
+# By default this starts a small Python sidecar on :29193 that rewrites client_golang's
+# POST /api/v1/query_range (and /query) into GET with the same form fields, because
+# prometheus/client_golang has no env flag to force GET. Set PROMQL_COMPLIANCE_NO_GET_PROXY=1
+# to talk to ClickHouse directly with test-clickhouse.yml (POST).
+#
+# Prerequisites: Docker, prometheus binary, Go, python3; ports 9090, 19093, 29193 free.
 # Usage (from anywhere):  bash /path/to/compliance/promql/scripts/run-on-vm-default-ports.sh
 # Or from promql/:        bash scripts/run-on-vm-default-ports.sh
 
@@ -31,8 +36,22 @@ curl -sf "http://127.0.0.1:9090/-/healthy" >/dev/null || {
   exit 1
 }
 
+if [ "${PROMQL_COMPLIANCE_NO_GET_PROXY:-}" = "1" ]; then
+  TEST_CFG="test-clickhouse.yml"
+else
+  pkill -f "prometheus-post-to-get-proxy.py" 2>/dev/null || true
+  sleep 1
+  export PROMQL_GET_PROXY_UPSTREAM="${PROMQL_GET_PROXY_UPSTREAM:-http://127.0.0.1:19093}"
+  export PROMQL_GET_PROXY_LISTEN="${PROMQL_GET_PROXY_LISTEN:-0.0.0.0:29193}"
+  nohup python3 "$ROOT/scripts/prometheus-post-to-get-proxy.py" \
+    >> /tmp/promql_get_proxy.log 2>&1 &
+  sleep 2
+  curl -sf "http://127.0.0.1:29193/api/v1/query?query=1" >/dev/null 2>&1 || true
+  TEST_CFG="test-clickhouse-get-proxy.yml"
+fi
+
 go build -o /tmp/promql-compliance-tester ./cmd/promql-compliance-tester
 /tmp/promql-compliance-tester \
   -config-file=promql-test-queries.yml \
-  -config-file=test-clickhouse.yml \
+  -config-file="$TEST_CFG" \
   "$@"
