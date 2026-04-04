@@ -4,6 +4,8 @@ This adds a **ClickHouse** target for the PromQL compliance tester (`promql-comp
 
 Upstream docs: [promql/README.md](./README.md).
 
+**VM workflow, port conflicts, Docker auth, and log analysis** for agents: use the local Cursor skill **`clickhouse-vm-prometheus-compliance`** (workspace `~/.cursor/skills/clickhouse-vm-prometheus-compliance/SKILL.md` — not part of this Git repository).
+
 ## Layout
 
 | Path | Purpose |
@@ -123,22 +125,24 @@ Keep **`remote_write`** and **`test_target_config.query_url`** aligned with **`C
 
 If you enable auth on the ClickHouse HTTP/prometheus listener, set `basic_auth_user` / `basic_auth_pass` in `test-clickhouse.yml` to match.
 
-## Troubleshooting
-
-- **`Bind … 19093 … already in use`:** another process (often a **native** `clickhouse-server` bound to `127.0.0.1:19093`) is using the default host port. Stop it or set **`CLICKHOUSE_PROMETHEUS_HOST_PORT`** to a free port and edit both YAML files to match.
-- **`Bind … 9090 … already in use`:** run reference Prometheus with `--web.listen-address=127.0.0.1:<port>` and set `reference_target_config.query_url` in `test-clickhouse.yml` to `http://localhost:<port>`.
-- **`401 Unauthorized` on `remote_write`:** ensure compose includes **`CLICKHOUSE_SKIP_USER_SETUP=1`** (committed default). Without it, the official image restricts the `default` user to loopback while scrapes arrive from the Docker bridge / host network.
-
 ## Expectations
 
 First runs may not be 100% passing until `query_tweaks` and/or engine gaps are addressed; this setup is meant to give a **reproducible** baseline.
 
 On this fork branch, `promql-compliance-tester` **records** internal compare errors (for example when the reference Prometheus version no longer matches a testcase’s `should_fail` expectation) as failed results so the run still prints a **`Total: … passed`** summary instead of exiting early.
 
-### Reference Prometheus must match this data path
+### Measured pass rate and what failed (informative)
 
-`test-clickhouse.yml` assumes the **same** reference Prometheus that loads `prometheus-test-data-clickhouse.yml` (demo scrape + `remote_write` into ClickHouse). If **`http://localhost:9090`** is already some other Prometheus on the host, use a different listen address and update `reference_target_config.query_url`.
+One full run (expanded **539** testcase executions against **`clickhouse/clickhouse-server:latest`**, dedicated reference Prometheus with the same `prometheus-test-data-clickhouse.yml`, short warmup) reported:
 
-### Measured pass rate (informative)
+**`Total: 4 / 539 (0.74%) passed, 0 unsupported`**
 
-With **`clickhouse/clickhouse-server:latest`**, a dedicated reference Prometheus using the same scrape + `remote_write` config as this tree, and a short warmup before the suite, recent runs reported on the order of **`Total: 4 / 539 (~0.7%) passed, 0 unsupported`**, with most failures from ClickHouse’s PromQL **`query_range`** path vs the Go `prometheus` client. Re-run after engine fixes; use a **longer** warmup (upstream suggests ~1 hour) if you care about data-dependent mismatches.
+Failure breakdown from that run’s text output:
+
+| Count | What happened |
+|------|----------------|
+| **534** | **ClickHouse** returned an error on the test target **`query_range`** call while **reference Prometheus** succeeded. The repeated message was **`bad_data`**: PromQL parser **`mismatched input '<EOF>' … at position 0`** with an **empty query string** after `while parsing PromQL query:` — i.e. the handler behaved as if no expression was supplied, for queries that are valid on Prometheus (literals like `42`, selectors, `rate(...)`, `histogram_quantile(...)`, etc.). This points to a **request-shape / parameter handling** mismatch between **`github.com/prometheus/client_golang`** (used by the tester) and ClickHouse’s **`query_api`** HTTP surface, not (primarily) wrong sample data for those cases. |
+| **1** | **Reference vs testcase expectation:** `label_replace(demo_num_cpus, "instance", "", "", "")` — testcase expects the reference query to **fail**; **Prometheus 2.45.x** on the VM **succeeded**, so the comparer recorded a failure (this fork’s change turns that into a counted failure instead of aborting the run). |
+| **4** | **Passed** (not printed as `PASSED` unless you pass **`-output-passing`** to the tester). |
+
+For agents: interpret logs, free ports, manage Docker lifecycle, and reproduce on a Linux VM via that skill. Re-run after ClickHouse fixes; use a **longer** warmup (upstream suggests ~1 hour) if you focus on **series alignment** rather than API/parse errors.
