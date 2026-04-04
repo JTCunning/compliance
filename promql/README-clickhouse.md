@@ -28,6 +28,8 @@ docker compose up -d
 
 Image default: `clickhouse/clickhouse-server:latest`. **`latest` may trail `master`**; for a build from source, see [Source-built image](#source-built-image) below.
 
+Compose publishes **9093** only on the host so it does not collide with other ClickHouse instances on **8123**/**9000**. Use `docker exec clickhouse-promql-compliance clickhouse-client` for SQL.
+
 ## 2. Create the TimeSeries table
 
 Once the container is healthy:
