@@ -17,7 +17,9 @@ Upstream docs: [promql/README.md](./README.md).
 
 ## Prometheus Go client and POST bodies
 
-`github.com/prometheus/client_golang` **`api/prometheus/v1`** sends **`QueryRange`** / **`Query`** as **`POST`** with **`application/x-www-form-urlencoded`** first (**`DoGetFallback`** retries **GET** only on **405** / **501**). There is no env flag to force **GET**. If **`query`** arrives empty in ClickHouse’s **`QueryAPIImpl`** (`PrometheusRequestHandler.cpp` + **`HTMLForm`**), fix **server-side** parsing on the **`prometheus`** HTTP listener so **POST** bodies are read the same way as for the main HTTP interface.
+`github.com/prometheus/client_golang` **`api/prometheus/v1`** sends **`QueryRange`** / **`Query`** as **`POST`** with **`application/x-www-form-urlencoded`** first (**`DoGetFallback`** retries **GET** only on **405** / **501**). There is no env flag to force **GET**.
+
+ClickHouse **`master`** parses these POST bodies correctly as of commit [`269be3c54ab` — *Parse Prometheus Query API POST bodies as urlencoded form*](https://github.com/ClickHouse/ClickHouse/commit/269be3c54ab) (first reported `clickhouse local` version: **`26.4.1.1`**). Older builds — including `clickhouse/clickhouse-server:latest` until the next stable rolls forward — saw `params->get("query", "")` come back empty in **`QueryAPIImpl`** (`PrometheusRequestHandler.cpp` + **`HTMLForm`**) on the Go client’s POST and answered with `bad_data: mismatched input '<EOF>' … at position 0`. Use a master-based image (see [Source-built image](#source-built-image)) to exercise the fix until that release reaches `latest`.
 
 ## Default ports (canonical)
 
@@ -66,7 +68,7 @@ From `promql/clickhouse-docker/`:
 docker compose up -d
 ```
 
-Image default: `clickhouse/clickhouse-server:latest`. **`latest` may trail `master`**; for a build from source, see [Source-built image](#source-built-image) below.
+Image default: `clickhouse/clickhouse-server:latest`. **`latest` may trail `master`** and, until the next stable, will not contain the POST-body fix described in [Prometheus Go client and POST bodies](#prometheus-go-client-and-post-bodies); for that fix today, build from source — see [Source-built image](#source-built-image) below.
 
 Compose sets **`CLICKHOUSE_SKIP_USER_SETUP=1`** so the `default` user accepts connections from outside the container (required for `remote_write` from host Prometheus). **Use only on isolated test hosts**, not production.
 
@@ -137,16 +139,26 @@ On this fork branch, `promql-compliance-tester` **records** internal compare err
 
 ### Measured pass rate and what failed (informative)
 
-One full run (expanded **539** testcase executions against **`clickhouse/clickhouse-server:latest`**, dedicated reference Prometheus with the same `prometheus-test-data-clickhouse.yml`, short warmup) reported:
+Two reference runs against the same `prometheus-test-data-clickhouse.yml` and reference Prometheus 2.45.x, expanding to **539** testcase executions, reference Prometheus on `:9090`, ClickHouse on `:19093`:
 
-**`Total: 4 / 539 (0.74%) passed, 0 unsupported`**
+| Image | `clickhouse local --version` | Warmup | Result |
+|-------|------------------------------|--------|--------|
+| `clickhouse/clickhouse-server:latest` (pre-POST-fix) | older `latest` | short | **`Total: 4 / 539 (0.74%) passed, 0 unsupported`** |
+| `ch-promql:local` from `master` after [`269be3c54ab`](https://github.com/ClickHouse/ClickHouse/commit/269be3c54ab) | **`26.4.1.1`** | ~6 min | **`Total: 275 / 539 (51.02%) passed, 0 unsupported`** |
 
-Failure breakdown from that run’s text output:
+The +50-percentage-point jump is entirely from the POST-body fix landing on master: the 534 pre-fix `bad_data: mismatched input '<EOF>' … at position 0` failures all became real result comparisons. Once those go away, the remaining failures on the master run are **engine gaps in ClickHouse’s PromQL implementation**, not transport problems:
 
-| Count | What happened |
-|------|----------------|
-| **534** | **ClickHouse** returned an error on the test target **`query_range`** call while **reference Prometheus** succeeded. The repeated message was **`bad_data`**: PromQL parser **`mismatched input '<EOF>' … at position 0`** with an **empty query string** after `while parsing PromQL query:` — i.e. **`params->get("query", "")` was empty** in ClickHouse’s **`QueryAPIImpl`** even though the Go client sent a normal **`POST`** with **`application/x-www-form-urlencoded`** body (see `PrometheusRequestHandler.cpp` + `HTMLForm`). Likely fix: ensure the **`prometheus`** HTTP stack parses **POST** form bodies like the main HTTP handler. |
-| **1** | **Reference vs testcase expectation:** `label_replace(demo_num_cpus, "instance", "", "", "")` — testcase expects the reference query to **fail**; **Prometheus 2.45.x** on the VM **succeeded**, so the comparer recorded a failure (this fork’s change turns that into a counted failure instead of aborting the run). |
-| **4** | **Passed** (not printed as `PASSED` unless you pass **`-output-passing`** to the tester). |
+| Count | Bucket (verbatim from `bad_data:`) |
+|------:|------------------------------------|
+| 54 | `Function quantile_over_time is not implemented` |
+| 12 | `Function histogram_quantile is not implemented` |
+| 7 each | `Function max_over_time / avg_over_time / increase / label_replace is not implemented` |
+| 6 each | `Function sum_over_time / min_over_time / count_over_time / stddev_over_time / stdvar_over_time / absent_over_time / changes / resets / deriv / predict_linear is not implemented` |
+| 4 each | `Function timestamp / clamp is not implemented`, `Aggregation operator 'topk' / 'bottomk' is not implemented` |
+| 3 | `Function label_join is not implemented` |
+| 2 each | `Function round / absent is not implemented`, `Quantile level is out of range [0..1]` |
+| 1 each | `Function clamp_min / clamp_max is not implemented`, `Aggregation operator 'count_values' is not implemented`, `Function 'year' / 'month' / 'hour' / 'minute' / 'day_of_month' / 'day_of_week' / 'days_in_month' expects 1 arguments` |
+| 51 | `Query returned different results` (semantic mismatch — usually fewer/more series in this short warmup) |
+| 1 | `Query succeeded, but should have failed.` — `label_replace(demo_num_cpus, "instance", "", "", "")`; reference Prometheus 2.45.x accepts what the testcase expected to fail (this fork’s change turns that into a counted failure instead of aborting the run). |
 
-For agents: interpret logs, free ports, manage Docker lifecycle, and reproduce on a Linux VM via that skill. Re-run after ClickHouse fixes; use a **longer** warmup (upstream suggests ~1 hour) if you focus on **series alignment** rather than API/parse errors.
+For agents: interpret logs, free ports, manage Docker lifecycle, and reproduce on a Linux VM via that skill. Use a **longer** warmup (upstream suggests ~1 hour) if you want to drive down the 51 `Query returned different results` rows that come from sparse range data.
