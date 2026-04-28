@@ -69,6 +69,8 @@ For example, to run the tester against Cortex:
 
 Note that some of the vendor-specific configuration files require you to replace certain placeholder values for endpoints and credentials before using them.
 
+This branch also documents **ClickHouse** in [README-clickhouse.md](./README-clickhouse.md) and **Elasticsearch (TSDS + ES|QL `PROMQL`)** in [README-elastic.md](./README-elastic.md).
+
 ## Testing your implementation for compliance
 
 We encourage projects and vendors to test their implementations for PromQL compliance. To do this, follow these steps:

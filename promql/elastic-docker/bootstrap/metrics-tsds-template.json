@@ -1,0 +1,54 @@
+{
+  "index_patterns": ["metrics-*"],
+  "priority": 250,
+  "data_stream": {},
+  "template": {
+    "settings": {
+      "index": {
+        "mode": "time_series",
+        "routing_path": [
+          "prometheus.labels.__name__",
+          "prometheus.labels.job",
+          "prometheus.labels.instance"
+        ]
+      }
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        }
+      },
+      "dynamic_templates": [
+        {
+          "prometheus_labels_dims": {
+            "path_match": "prometheus.labels.*",
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "keyword",
+              "time_series_dimension": true
+            }
+          }
+        },
+        {
+          "prometheus_metrics_gauge": {
+            "path_match": "prometheus.metrics.*",
+            "mapping": {
+              "type": "double",
+              "time_series_metric": "gauge"
+            }
+          }
+        },
+        {
+          "prometheus_counter": {
+            "path_match": "prometheus.*.counter",
+            "mapping": {
+              "type": "double",
+              "time_series_metric": "counter"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

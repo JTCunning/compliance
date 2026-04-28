@@ -1,0 +1,14 @@
+reference_target_config:
+  # Default script binds reference Prometheus on **9092** so it can run alongside
+  # the ClickHouse compliance flow (which uses **9090**).
+  query_url: 'http://localhost:9092'
+
+test_target_config:
+  query_url: 'http://localhost:19094'
+
+# Optional: set when Elasticsearch enables basic auth on HTTP.
+# basic_auth_user: 'elastic'
+# basic_auth_pass: 'changeme'
+
+# Add query_tweaks after a baseline run if comparisons show systematic differences
+# (see test-thanos.yml for drop_result_labels, test-amp.yml for truncate_timestamps_to_ms).

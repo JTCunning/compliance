@@ -1,0 +1,63 @@
+# Elasticsearch 9.4+ (Prometheus Remote Write + ES|QL PROMQL) + promql-shim for compliance runs.
+#
+# Default image is **9.4.0-SNAPSHOT** because the `PROMQL` source command ships in 9.4 while the GA
+# `9.4.0` tag may not be published on docker.elastic.co yet. When `9.4.0` exists, run:
+#   ELASTIC_VERSION=9.4.0 docker compose up -d
+#
+# Or copy docker-compose.override.source.yml.example to docker-compose.override.yml
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-9.4.0-SNAPSHOT}
+    container_name: elasticsearch-promql-compliance
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+      - cluster.routing.allocation.disk.watermark.low=1gb
+      - cluster.routing.allocation.disk.watermark.high=500mb
+      - cluster.routing.allocation.disk.watermark.flood_stage=100mb
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 262144
+        hard: 262144
+    ports:
+      - "${ES_HTTP_HOST_PORT:-9200}:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9200/_cluster/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 36
+      start_period: 60s
+
+  bootstrap:
+    image: curlimages/curl:8.5.0
+    container_name: elasticsearch-promql-compliance-bootstrap
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      ES_URL: http://elasticsearch:9200
+    volumes:
+      - ./bootstrap:/bootstrap:ro
+    entrypoint: ["/bin/sh", "/bootstrap/entry.sh"]
+
+  promql-shim:
+    build:
+      context: ./promql-shim
+      dockerfile: Dockerfile
+    container_name: promql-elastic-shim
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      ES_URL: http://elasticsearch:9200
+      INDEX_PATTERN: metrics-*
+      LISTEN: ":8080"
+    ports:
+      - "${ES_PROMQL_HOST_PORT:-19094}:8080"

@@ -15,3 +15,6 @@
 # vendor/
 
 /promql-compliance-tester
+
+# Local build of the Elasticsearch promql-shim (see elastic-docker/promql-shim/)
+/elastic-docker/promql-shim/promql-shim

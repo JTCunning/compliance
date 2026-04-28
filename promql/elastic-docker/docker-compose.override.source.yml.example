@@ -1,0 +1,12 @@
+# Copy to docker-compose.override.yml (gitignored locally if you prefer) and adjust the tag,
+# or run: ELASTIC_VERSION=9.4.0 docker compose up -d
+#
+# Example: use a locally built Elasticsearch image:
+#
+# services:
+#   elasticsearch:
+#     image: elasticsearch:local
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.0

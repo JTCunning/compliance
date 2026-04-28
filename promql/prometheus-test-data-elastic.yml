@@ -1,0 +1,22 @@
+# Same scrape targets as prometheus-test-data.yml, plus remote_write to Elasticsearch
+# native Prometheus Remote Write receiver (9.4+).
+# Start reference Prometheus with:
+#   prometheus --config.file=prometheus-test-data-elastic.yml
+#
+# Prerequisites: Elasticsearch listening on the host (default 127.0.0.1:9200; see elastic-docker/).
+# Run reference Prometheus on a non-default listen port (9092) so it does not clash with other
+# compliance stacks on 9090 — see scripts/run-on-vm-default-ports-elastic.sh.
+
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+- job_name: 'demo'
+  static_configs:
+    - targets:
+      - 'demo.promlabs.com:10000'
+      - 'demo.promlabs.com:10001'
+      - 'demo.promlabs.com:10002'
+
+remote_write:
+  - url: http://127.0.0.1:9200/api/v1/prometheus/_remote_write
