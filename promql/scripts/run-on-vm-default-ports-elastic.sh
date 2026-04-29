@@ -9,6 +9,7 @@
 #   COMPLIANCE_WARMUP_SECONDS (default 360) — scrape + remote_write before the tester (use 3600 for upstream-style 1h warmup).
 #   COMPLIANCE_STORAGE_LOG — JSONL path for storage snapshots (default /tmp/prom_es_benchmark_storage.jsonl).
 #   PROMETHEUS_TSDB_PATH — reference Prometheus TSDB dir (default /tmp/prom_es_compliance_default).
+#   COMPLIANCE_JSON_RESULTS — if set, writes per-query comparison JSON (-output-format json; last flag wins, so pass tester flags before any conflicting -output-format).
 #
 # Usage (from anywhere):  bash /path/to/compliance/promql/scripts/run-on-vm-default-ports-elastic.sh
 # Or from promql/:        bash scripts/run-on-vm-default-ports-elastic.sh
@@ -81,13 +82,29 @@ sleep "$WARMUP"
 echo "Storage snapshot: after write (before promql-compliance-tester read phase) → ${STORAGE_LOG}"
 record_storage_snapshot post_write
 
+curl -sf "http://127.0.0.1:${REF_PROM_PORT}/-/healthy" >/dev/null || {
+  echo "ERROR: Reference Prometheus on :${REF_PROM_PORT} is not healthy before the tester (see /tmp/prom_es_compliance_default.log)."
+  exit 1
+}
+
 go build -o /tmp/promql-compliance-tester ./cmd/promql-compliance-tester
 set +e
-/tmp/promql-compliance-tester \
-  -config-file=promql-test-queries.yml \
-  -config-file=test-elastic.yml \
-  "$@"
-_tester_rc=$?
+if [[ -n "${COMPLIANCE_JSON_RESULTS:-}" ]]; then
+  /tmp/promql-compliance-tester \
+    -config-file=promql-test-queries.yml \
+    -config-file=test-elastic.yml \
+    "$@" \
+    -output-format json >"$COMPLIANCE_JSON_RESULTS"
+  _tester_rc=$?
+  echo "Per-query ref-vs-test JSON written to: ${COMPLIANCE_JSON_RESULTS}"
+  python3 "$ROOT/scripts/summarize_promql_compliance_json.py" "$COMPLIANCE_JSON_RESULTS" || true
+else
+  /tmp/promql-compliance-tester \
+    -config-file=promql-test-queries.yml \
+    -config-file=test-elastic.yml \
+    "$@"
+  _tester_rc=$?
+fi
 set -e
 
 echo "Storage snapshot: after read (tester finished, rc=${_tester_rc}) → ${STORAGE_LOG}"

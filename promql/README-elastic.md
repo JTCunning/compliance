@@ -148,6 +148,53 @@ python3 scripts/capture_elastic_benchmark_storage.py \
 
 Override the ES container name if yours differs: **`ELASTICSEARCH_DOCKER_NAME`** (default `elasticsearch-promql-compliance`).
 
+## Per-query comparison (is Elasticsearch / the shim correct?)
+
+The **`promql-compliance-tester` already compares each expanded query** against:
+
+1. **Reference Prometheus** (`reference_target_config.query_url` — port **9092** in this layout), and  
+2. **Test target** (`test_target_config.query_url` — **promql-shim** on **19094**, which forwards to Elasticsearch **PROMQL**).
+
+For every query it runs the **same** `query_range` with the **same** `start`, `end`, and `step`, then:
+
+- On success: both sides returned equivalent **`model.Matrix`** (after sort + float tolerance from `query_tweaks`).
+- On failure: you get **`unexpectedFailure`** (HTTP/parse errors from the test side), **`unexpectedSuccess`** (should have failed but did not), or a text **`diff`** from `go-cmp` when matrices disagree.
+
+### Machine-readable JSON + summary
+
+Run the elastic script with a short warmup and capture JSON:
+
+```bash
+cd promql
+COMPLIANCE_WARMUP_SECONDS=120 \
+COMPLIANCE_JSON_RESULTS=/tmp/elastic_compliance.json \
+bash scripts/run-on-vm-default-ports-elastic.sh -query-parallelism=16
+```
+
+That writes one JSON document (see `output/json.go`: `results` array of `comparer.Result`) and prints a **bucketed summary** via `scripts/summarize_promql_compliance_json.py`.
+
+Inspect a single outcome:
+
+```bash
+python3 -c "import json; d=json.load(open('/tmp/elastic_compliance.json')); \
+  r=[x for x in d['results'] if x.get('diff')][:1][0]; \
+  print(r['testCase']['query']); print(r['diff'][:2000])"
+```
+
+### Manual spot-check (same query, both URLs)
+
+Pick `start` / `end` / `step` from a failing `testCase` in the JSON, then:
+
+```bash
+REF='http://127.0.0.1:9092'
+SHIM='http://127.0.0.1:19094'
+Q='demo_memory_usage_bytes'
+curl -sG "$REF/api/v1/query_range"  --data-urlencode "query=$Q" --data-urlencode "start=..." --data-urlencode "end=..." --data-urlencode "step=10" | jq .data.result[0].values[:3]
+curl -sG "$SHIM/api/v1/query_range" --data-urlencode "query=$Q" --data-urlencode "start=..." --data-urlencode "end=..." --data-urlencode "step=10" | jq .data.result[0].values[:3]
+```
+
+The shim returns the same Prometheus JSON envelope as the reference API, so **`jq`** paths match.
+
 ## Build only the shim image
 
 From **`promql/`**:
