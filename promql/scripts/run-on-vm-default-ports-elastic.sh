@@ -5,7 +5,10 @@
 #   promql-shim (Prom API): http://localhost:${ES_PROMQL_HOST_PORT:-19094}
 #
 # Prerequisites: Docker; prometheus binary; Go; ports 9092, 9200, 19094 free (defaults).
-# Optional: COMPLIANCE_WARMUP_SECONDS (default 360) — time to scrape + remote_write before the tester.
+# Optional:
+#   COMPLIANCE_WARMUP_SECONDS (default 360) — scrape + remote_write before the tester (use 3600 for upstream-style 1h warmup).
+#   COMPLIANCE_STORAGE_LOG — JSONL path for storage snapshots (default /tmp/prom_es_benchmark_storage.jsonl).
+#   PROMETHEUS_TSDB_PATH — reference Prometheus TSDB dir (default /tmp/prom_es_compliance_default).
 #
 # Usage (from anywhere):  bash /path/to/compliance/promql/scripts/run-on-vm-default-ports-elastic.sh
 # Or from promql/:        bash scripts/run-on-vm-default-ports-elastic.sh
@@ -16,6 +19,19 @@ REF_PROM_PORT="${REF_PROM_PORT:-9092}"
 ES_HTTP_HOST_PORT="${ES_HTTP_HOST_PORT:-9200}"
 ES_PROMQL_HOST_PORT="${ES_PROMQL_HOST_PORT:-19094}"
 WARMUP="${COMPLIANCE_WARMUP_SECONDS:-360}"
+PROM_TSDB="${PROMETHEUS_TSDB_PATH:-/tmp/prom_es_compliance_default}"
+STORAGE_LOG="${COMPLIANCE_STORAGE_LOG:-/tmp/prom_es_benchmark_storage.jsonl}"
+ES_DOCKER_NAME="${ELASTICSEARCH_DOCKER_NAME:-elasticsearch-promql-compliance}"
+
+record_storage_snapshot() {
+  local phase="$1"
+  python3 "$ROOT/scripts/capture_elastic_benchmark_storage.py" \
+    --phase "$phase" \
+    --prom-tsdb "$PROM_TSDB" \
+    --es-url "http://127.0.0.1:${ES_HTTP_HOST_PORT}" \
+    --log "$STORAGE_LOG" \
+    --docker-es-container "$ES_DOCKER_NAME"
+}
 
 cd "$ROOT/elastic-docker"
 docker compose up -d
@@ -41,12 +57,12 @@ cd "$ROOT"
 # Avoid colliding with an unrelated prometheus; only stop one using our config path.
 pkill -f "prometheus.*${ROOT}/prometheus-test-data-elastic.yml" 2>/dev/null || true
 sleep 1
-rm -rf /tmp/prom_es_compliance_default
-mkdir -p /tmp/prom_es_compliance_default
+rm -rf "$PROM_TSDB"
+mkdir -p "$PROM_TSDB"
 nohup prometheus \
   --config.file="$ROOT/prometheus-test-data-elastic.yml" \
   --web.listen-address="0.0.0.0:${REF_PROM_PORT}" \
-  --storage.tsdb.path=/tmp/prom_es_compliance_default \
+  --storage.tsdb.path="$PROM_TSDB" \
   >> /tmp/prom_es_compliance_default.log 2>&1 &
 for _ in $(seq 1 40); do
   if curl -sf "http://127.0.0.1:${REF_PROM_PORT}/-/healthy" >/dev/null 2>&1; then
@@ -62,8 +78,19 @@ curl -sf "http://127.0.0.1:${REF_PROM_PORT}/-/healthy" >/dev/null || {
 echo "Warmup: scraping + remote_write for ${WARMUP}s (override with COMPLIANCE_WARMUP_SECONDS) ..."
 sleep "$WARMUP"
 
+echo "Storage snapshot: after write (before promql-compliance-tester read phase) → ${STORAGE_LOG}"
+record_storage_snapshot post_write
+
 go build -o /tmp/promql-compliance-tester ./cmd/promql-compliance-tester
+set +e
 /tmp/promql-compliance-tester \
   -config-file=promql-test-queries.yml \
   -config-file=test-elastic.yml \
   "$@"
+_tester_rc=$?
+set -e
+
+echo "Storage snapshot: after read (tester finished, rc=${_tester_rc}) → ${STORAGE_LOG}"
+record_storage_snapshot post_read
+
+exit "${_tester_rc}"

@@ -31,6 +31,7 @@ The **`promql-shim`** sidecar accepts `/api/v1/query_range`, forwards to ES|QL `
 | [prometheus-test-data-elastic.yml](./prometheus-test-data-elastic.yml) | Demo scrape targets + `remote_write` to Elasticsearch `/api/v1/prometheus/_remote_write`. |
 | [elastic-docker/](./elastic-docker/) | `docker compose` stack: Elasticsearch, one-shot index-template bootstrap, `promql-shim`. |
 | [scripts/run-on-vm-default-ports-elastic.sh](./scripts/run-on-vm-default-ports-elastic.sh) | One-shot: compose up → reference Prometheus on **9092** → warmup → run tester (`test-elastic.yml`). |
+| [scripts/capture_elastic_benchmark_storage.py](./scripts/capture_elastic_benchmark_storage.py) | Optional: append one JSON line of **Prometheus TSDB** + **Elasticsearch** sizes (also invoked automatically by the run script). |
 
 ## Default ports (canonical)
 
@@ -109,6 +110,43 @@ Shorter local iteration:
 ```bash
 COMPLIANCE_WARMUP_SECONDS=120 bash scripts/run-on-vm-default-ports-elastic.sh
 ```
+
+Upstream-style **one-hour** warmup (dense overlap for range queries):
+
+```bash
+COMPLIANCE_WARMUP_SECONDS=3600 bash scripts/run-on-vm-default-ports-elastic.sh
+```
+
+## Storage snapshots (write vs read)
+
+The run script records **on-disk / logical store sizes** for both write paths used in this benchmark:
+
+| System | What is measured |
+|--------|------------------|
+| **Reference Prometheus** | Host `du -sb` on the TSDB directory (`PROMETHEUS_TSDB_PATH`, default `/tmp/prom_es_compliance_default`). |
+| **Elasticsearch** | `/_cluster/stats` → `indices.store.size_in_bytes` and `indices.docs.count`, plus optional `docker exec … du -sb` on `/usr/share/elasticsearch/data` inside the ES container. |
+
+**When:** two JSON lines are appended to **`COMPLIANCE_STORAGE_LOG`** (default **`/tmp/prom_es_benchmark_storage.jsonl`**):
+
+1. **`post_write`** — immediately **after** the warmup sleep (scrapes + `remote_write` to ES have been running), **before** `promql-compliance-tester` (the heavy **read** phase against Prometheus + the shim/ES).
+2. **`post_read`** — **after** the tester exits (same stores; sizes usually stable because the suite is read-biased).
+
+Each line is one JSON object (JSONL). Example:
+
+```bash
+tail -2 /tmp/prom_es_benchmark_storage.jsonl | python3 -m json.tool
+```
+
+Manual capture (same fields):
+
+```bash
+python3 scripts/capture_elastic_benchmark_storage.py \
+  --phase manual \
+  --prom-tsdb /tmp/prom_es_compliance_default \
+  --es-url http://127.0.0.1:9200
+```
+
+Override the ES container name if yours differs: **`ELASTICSEARCH_DOCKER_NAME`** (default `elasticsearch-promql-compliance`).
 
 ## Build only the shim image
 
