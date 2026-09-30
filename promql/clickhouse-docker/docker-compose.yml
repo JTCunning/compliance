@@ -1,0 +1,42 @@
+# ClickHouse (master build) plus a reference Prometheus that scrapes the demo
+# targets and remote writes them into a ClickHouse TimeSeries table.
+#
+# Override the images or the host ports with environment variables:
+#   CLICKHOUSE_IMAGE            default clickhouse/clickhouse-server:head
+#   CLICKHOUSE_HTTP_HOST_PORT   default 8123
+#   PROMETHEUS_IMAGE            default prom/prometheus:v3.15.0
+#   PROMETHEUS_HOST_PORT        default 9090
+
+services:
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:head}
+    container_name: clickhouse-promql-compliance
+    environment:
+      # Keep the built-in default user reachable from the compose network.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    ports:
+      - "${CLICKHOUSE_HTTP_HOST_PORT:-8123}:8123"
+    volumes:
+      - ./config.d/prometheus-api.xml:/etc/clickhouse-server/config.d/prometheus-api.xml:ro
+      - ./users.d/time-series.xml:/etc/clickhouse-server/users.d/time-series.xml:ro
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.15.0}
+    container_name: prometheus-promql-compliance
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      clickhouse:
+        condition: service_healthy
